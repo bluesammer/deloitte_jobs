@@ -17,15 +17,16 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, WebDriverException
 
 
 # =========================
 # CONFIG
 # =========================
 
-#RUN_MODE = "local"   # "local" or "railway"
 RUN_MODE = os.getenv("RUN_MODE", "local").strip().lower()
+if RUN_MODE not in ["local", "railway"]:
+    RUN_MODE = "local"
 
 BASE_URL = "https://careers.deloitte.ca/search/"
 
@@ -74,7 +75,7 @@ SELENIUM_WAIT_SECONDS = 20
 # =========================
 
 def get_data_dir() -> Path:
-    if RUN_MODE.lower() == "railway":
+    if RUN_MODE == "railway":
         data_dir = RAILWAY_DATA_DIR
     else:
         data_dir = LOCAL_DATA_DIR
@@ -95,20 +96,29 @@ STATE_FILE = DATA_DIR / "seen_jobs.json"
 def build_driver():
     opts = Options()
 
-    if RUN_MODE.lower() == "local":
+    if RUN_MODE == "local":
         chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
         if os.path.exists(chrome_path):
             opts.binary_location = chrome_path
         opts.add_argument("--start-maximized")
+
     else:
+        chrome_bin = os.getenv("CHROME_BIN", "/usr/bin/google-chrome")
+        if os.path.exists(chrome_bin):
+            opts.binary_location = chrome_bin
+
         opts.add_argument("--headless=new")
         opts.add_argument("--no-sandbox")
         opts.add_argument("--disable-dev-shm-usage")
         opts.add_argument("--disable-gpu")
         opts.add_argument("--window-size=1400,1800")
+        opts.add_argument("--remote-debugging-port=9222")
 
-    driver = webdriver.Chrome(options=opts)
-    return driver
+    try:
+        return webdriver.Chrome(options=opts)
+    except WebDriverException as e:
+        print(f"Failed to start Chrome: {e}")
+        raise
 
 
 # =========================
@@ -252,7 +262,9 @@ def open_page(driver, page_num):
     }
     url = BASE_URL + "?" + urlencode(params)
     driver.get(url)
+    print(f"Loaded URL: {driver.current_url}")
     handle_cookies(driver)
+    time.sleep(2)
 
     buttons = driver.find_elements(By.CSS_SELECTOR, "button[data-testid='submitJobSearchBtn']")
     for btn in buttons:
@@ -270,7 +282,7 @@ def wait_for_job_links(driver, wait):
     ]
     for css in candidates:
         try:
-            wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, css)) > 0)
+            wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, css)))
             return css
         except Exception:
             pass
@@ -375,6 +387,8 @@ def main():
     print(f"RUN_MODE: {RUN_MODE}")
     print(f"DATA_DIR: {DATA_DIR}")
 
+    first_run = not STATE_FILE.exists()
+
     all_jobs = run_scraper()
 
     save_csv(all_jobs)
@@ -383,7 +397,10 @@ def main():
     new_jobs = update_baseline_and_find_new(all_jobs)
     print(f"New jobs found this run: {len(new_jobs)}")
 
-    send_new_jobs_to_telegram(new_jobs)
+    if first_run:
+        print("First run detected. Baseline created. No Telegram alerts sent.")
+    else:
+        send_new_jobs_to_telegram(new_jobs)
 
 
 if __name__ == "__main__":
