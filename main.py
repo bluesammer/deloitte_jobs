@@ -24,7 +24,8 @@ from selenium.common.exceptions import TimeoutException
 # CONFIG
 # =========================
 
-RUN_MODE = "local"   # "local" or "railway"
+#RUN_MODE = "local"   # "local" or "railway"
+RUN_MODE = os.getenv("RUN_MODE", "local").strip().lower()
 
 BASE_URL = "https://careers.deloitte.ca/search/"
 
