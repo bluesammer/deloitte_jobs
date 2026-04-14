@@ -15,6 +15,7 @@ import requests
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, WebDriverException
@@ -75,11 +76,7 @@ SELENIUM_WAIT_SECONDS = 20
 # =========================
 
 def get_data_dir() -> Path:
-    if RUN_MODE == "railway":
-        data_dir = RAILWAY_DATA_DIR
-    else:
-        data_dir = LOCAL_DATA_DIR
-
+    data_dir = RAILWAY_DATA_DIR if RUN_MODE == "railway" else LOCAL_DATA_DIR
     data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir
 
@@ -100,24 +97,38 @@ def build_driver():
         chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
         if os.path.exists(chrome_path):
             opts.binary_location = chrome_path
+
         opts.add_argument("--start-maximized")
 
-    else:
-        chrome_bin = os.getenv("CHROME_BIN", "/usr/bin/google-chrome")
-        if os.path.exists(chrome_bin):
-            opts.binary_location = chrome_bin
+        try:
+            return webdriver.Chrome(options=opts)
+        except WebDriverException as e:
+            print(f"Failed to start local Chrome: {e}")
+            raise
 
-        opts.add_argument("--headless=new")
-        opts.add_argument("--no-sandbox")
-        opts.add_argument("--disable-dev-shm-usage")
-        opts.add_argument("--disable-gpu")
-        opts.add_argument("--window-size=1400,1800")
-        opts.add_argument("--remote-debugging-port=9222")
+    # Railway mode
+    chrome_bin = "/usr/bin/google-chrome"
+    chrome_driver = "/usr/bin/chromedriver"
+
+    print("Chrome exists:", os.path.exists(chrome_bin))
+    print("Driver exists:", os.path.exists(chrome_driver))
+
+    if os.path.exists(chrome_bin):
+        opts.binary_location = chrome_bin
+
+    opts.add_argument("--headless=new")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--disable-gpu")
+    opts.add_argument("--window-size=1400,1800")
+    opts.add_argument("--remote-debugging-port=9222")
+
+    service = Service(chrome_driver)
 
     try:
-        return webdriver.Chrome(options=opts)
+        return webdriver.Chrome(service=service, options=opts)
     except WebDriverException as e:
-        print(f"Failed to start Chrome: {e}")
+        print(f"Failed to start Railway Chrome: {e}")
         raise
 
 
@@ -263,6 +274,7 @@ def open_page(driver, page_num):
     url = BASE_URL + "?" + urlencode(params)
     driver.get(url)
     print(f"Loaded URL: {driver.current_url}")
+
     handle_cookies(driver)
     time.sleep(2)
 
@@ -280,12 +292,14 @@ def wait_for_job_links(driver, wait):
         "a[href*='/job/']",
         "a[data-testid='jobTitle']",
     ]
+
     for css in candidates:
         try:
             wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, css)))
             return css
         except Exception:
             pass
+
     raise TimeoutException("No job links found")
 
 
@@ -323,16 +337,18 @@ def scrape_page(driver, css, seen_page_run):
 # =========================
 
 def run_scraper():
-    driver = build_driver()
-    wait = WebDriverWait(driver, SELENIUM_WAIT_SECONDS)
-
-    seen_page_run = set()
-    all_jobs = []
-
-    page = 1
-    empty_streak = 0
+    driver = None
 
     try:
+        driver = build_driver()
+        wait = WebDriverWait(driver, SELENIUM_WAIT_SECONDS)
+
+        seen_page_run = set()
+        all_jobs = []
+
+        page = 1
+        empty_streak = 0
+
         while True:
             print(f"\nOpening page {page}")
             open_page(driver, page)
@@ -360,10 +376,14 @@ def run_scraper():
 
             page += 1
 
-    finally:
-        driver.quit()
+        return all_jobs
 
-    return all_jobs
+    finally:
+        if driver is not None:
+            try:
+                driver.quit()
+            except Exception:
+                pass
 
 
 def update_baseline_and_find_new(all_jobs):
