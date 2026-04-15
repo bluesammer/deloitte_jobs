@@ -1,6 +1,0 @@
-[phases.setup]
-nixPkgs = [
-  "python311",
-  "chromium",
-  "chromium-driver"
-]
