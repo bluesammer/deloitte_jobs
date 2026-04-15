@@ -63,8 +63,8 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
 MAX_EMPTY_PAGES = 2
-PAGE_WAIT_SECONDS = 2
-SELENIUM_WAIT_SECONDS = 20
+PAGE_WAIT_SECONDS = 3
+SELENIUM_WAIT_SECONDS = 25
 
 
 def get_data_dir() -> Path:
@@ -87,33 +87,28 @@ def build_driver():
             opts.binary_location = chrome_path
 
         opts.add_argument("--start-maximized")
+        opts.add_argument("--disable-blink-features=AutomationControlled")
 
         try:
             print("Starting local Chrome")
-            return webdriver.Chrome(options=opts)
+            driver = webdriver.Chrome(options=opts)
+            driver.set_page_load_timeout(60)
+            return driver
         except WebDriverException as e:
             print(f"Failed to start local Chrome: {e}")
             raise
 
-    chrome_bin_candidates = [
-        "/usr/bin/chromium",
-        "/usr/bin/chromium-browser",
-        "/usr/bin/google-chrome",
-    ]
+    chrome_bin = "/usr/bin/chromium"
+    chrome_driver = "/usr/bin/chromedriver"
 
-    chrome_driver_candidates = [
-        "/usr/bin/chromedriver",
-        "/usr/lib/chromium/chromedriver",
-    ]
+    print("Chrome exists:", os.path.exists(chrome_bin))
+    print("Driver exists:", os.path.exists(chrome_driver))
 
-    chrome_bin = next((p for p in chrome_bin_candidates if os.path.exists(p)), None)
-    chrome_driver = next((p for p in chrome_driver_candidates if os.path.exists(p)), None)
+    if not os.path.exists(chrome_bin):
+        raise RuntimeError(f"Chrome binary not found: {chrome_bin}")
 
-    print("Chrome path found:", chrome_bin)
-    print("Driver path found:", chrome_driver)
-
-    if not chrome_bin or not chrome_driver:
-        raise RuntimeError("Chrome or chromedriver not found in Railway environment")
+    if not os.path.exists(chrome_driver):
+        raise RuntimeError(f"ChromeDriver not found: {chrome_driver}")
 
     opts.binary_location = chrome_bin
     opts.add_argument("--headless=new")
@@ -121,13 +116,15 @@ def build_driver():
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--disable-gpu")
     opts.add_argument("--window-size=1400,1800")
-    opts.add_argument("--remote-debugging-port=9222")
+    opts.add_argument("--disable-blink-features=AutomationControlled")
 
     service = Service(chrome_driver)
 
     try:
         print("Starting Railway Chrome")
-        return webdriver.Chrome(service=service, options=opts)
+        driver = webdriver.Chrome(service=service, options=opts)
+        driver.set_page_load_timeout(60)
+        return driver
     except WebDriverException as e:
         print(f"Failed to start Railway Chrome: {e}")
         raise
@@ -293,10 +290,11 @@ def open_page(driver, page_num):
             pass
 
 
-def wait_for_job_links(driver, wait):
+def wait_for_job_links(driver, wait, page_num):
     candidates = [
-        "a[href*='/job/']",
+        "a[data-job-id]",
         "a[data-testid='jobTitle']",
+        "a[href*='/job/']",
     ]
 
     print("Waiting for job links...")
@@ -304,12 +302,20 @@ def wait_for_job_links(driver, wait):
     for css in candidates:
         try:
             wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, css)))
+            time.sleep(2)
             count = len(driver.find_elements(By.CSS_SELECTOR, css))
             print(f"Selector matched: {css}, count: {count}")
-            return css
+            if count > 0:
+                return css
         except Exception:
             print(f"Selector did not match yet: {css}")
-            pass
+
+    debug_file = DATA_DIR / f"debug_rendered_page_{page_num}.html"
+    try:
+        debug_file.write_text(driver.page_source, encoding="utf-8")
+        print(f"Saved debug rendered page: {debug_file}")
+    except Exception as e:
+        print(f"Failed to save debug rendered page: {e}")
 
     raise TimeoutException("No job links found")
 
@@ -338,6 +344,7 @@ def scrape_page(driver, css, seen_page_run):
                         "title": title,
                         "url": href,
                     })
+                    print(f"Added job: {title[:120]}")
         except Exception:
             pass
 
@@ -362,7 +369,7 @@ def run_scraper():
             open_page(driver, page)
 
             try:
-                css = wait_for_job_links(driver, wait)
+                css = wait_for_job_links(driver, wait, page)
             except TimeoutException:
                 print(f"No job links found on page {page}")
                 page_jobs = []
