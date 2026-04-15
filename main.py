@@ -7,6 +7,8 @@
 import csv
 import json
 import os
+import shutil
+import subprocess
 import time
 from pathlib import Path
 from urllib.parse import urlencode
@@ -98,17 +100,27 @@ def build_driver():
             print(f"Failed to start local Chrome: {e}")
             raise
 
-    chrome_bin = "/usr/bin/chromium"
-    chrome_driver = "/usr/bin/chromedriver"
+    chrome_bin = (
+        shutil.which("chromium")
+        or shutil.which("chromium-browser")
+        or shutil.which("google-chrome")
+        or shutil.which("google-chrome-stable")
+    )
+    chrome_driver = shutil.which("chromedriver")
 
-    print("Chrome exists:", os.path.exists(chrome_bin))
-    print("Driver exists:", os.path.exists(chrome_driver))
+    print(f"Chrome found at: {chrome_bin}")
+    print(f"Driver found at: {chrome_driver}")
 
-    if not os.path.exists(chrome_bin):
-        raise RuntimeError(f"Chrome binary not found: {chrome_bin}")
+    if not chrome_bin:
+        result = subprocess.run(
+            ["find", "/usr", "-name", "chrom*", "-type", "f"],
+            capture_output=True, text=True
+        )
+        print(f"Chrom* files on disk:\n{result.stdout or '(none found)'}")
+        raise RuntimeError("Chrome binary not found — see above for installed files")
 
-    if not os.path.exists(chrome_driver):
-        raise RuntimeError(f"ChromeDriver not found: {chrome_driver}")
+    if not chrome_driver:
+        raise RuntimeError("chromedriver not found in PATH")
 
     opts.binary_location = chrome_bin
     opts.add_argument("--headless=new")
