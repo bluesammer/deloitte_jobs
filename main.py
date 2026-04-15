@@ -1,15 +1,15 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[2]:
+# In[3]:
 
 
 import csv
 import json
 import os
-import shutil
-import subprocess
 import time
+import shutil
+import functools
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -22,6 +22,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, WebDriverException
 
+print = functools.partial(print, flush=True)
 
 RUN_MODE = os.getenv("RUN_MODE", "local").strip().lower()
 if RUN_MODE not in ["local", "railway"]:
@@ -84,8 +85,13 @@ def build_driver():
     opts = Options()
 
     if RUN_MODE == "local":
-        chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-        if os.path.exists(chrome_path):
+        chrome_candidates = [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        ]
+        chrome_path = next((p for p in chrome_candidates if os.path.exists(p)), None)
+
+        if chrome_path:
             opts.binary_location = chrome_path
 
         opts.add_argument("--start-maximized")
@@ -106,24 +112,23 @@ def build_driver():
         or shutil.which("google-chrome")
         or shutil.which("google-chrome-stable")
     )
-    chrome_driver = shutil.which("chromedriver")
 
-    print(f"Chrome found at: {chrome_bin}")
-    print(f"Driver found at: {chrome_driver}")
+    chrome_driver = (
+        shutil.which("chromedriver")
+        or ("/usr/lib/chromium/chromedriver" if os.path.exists("/usr/lib/chromium/chromedriver") else None)
+    )
+
+    print("Chrome path found:", chrome_bin)
+    print("Driver path found:", chrome_driver)
 
     if not chrome_bin:
-        result = subprocess.run(
-            ["find", "/usr", "-name", "chrom*", "-type", "f"],
-            capture_output=True, text=True
-        )
-        print(f"Chrom* files on disk:\n{result.stdout or '(none found)'}")
-        raise RuntimeError("Chrome binary not found — see above for installed files")
+        raise RuntimeError("Chrome binary not found in Railway environment")
 
     if not chrome_driver:
-        raise RuntimeError("chromedriver not found in PATH")
+        raise RuntimeError("ChromeDriver not found in Railway environment")
 
     opts.binary_location = chrome_bin
-    opts.add_argument("--headless=new")
+    opts.add_argument("--headless")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--disable-gpu")
@@ -304,9 +309,9 @@ def open_page(driver, page_num):
 
 def wait_for_job_links(driver, wait, page_num):
     candidates = [
+        "a[href*='/job/']",
         "a[data-job-id]",
         "a[data-testid='jobTitle']",
-        "a[href*='/job/']",
     ]
 
     print("Waiting for job links...")
