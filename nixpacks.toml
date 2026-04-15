@@ -1,6 +1,11 @@
 [phases.setup]
 nixPkgs = [
   "python311",
-  "google-chrome",
-  "chromedriver"
+  "chromium",
+  "chromium-driver"
+]
+
+[phases.build]
+cmds = [
+  "echo Build complete"
 ]
